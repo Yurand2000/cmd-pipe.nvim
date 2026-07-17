@@ -1,7 +1,7 @@
 local M = {}
 
-function M.setup(opts)
-	opts = opts or {}
+function M.setup(module_opts)
+	module_opts = module_opts or {}
 
 	local buf_data_to_string = function(lines)
 		local text = table.concat(lines, "\n")
@@ -18,6 +18,61 @@ function M.setup(opts)
 		local curr_buf = vim.api.nvim_get_current_buf()
 		local curr_lines = vim.api.nvim_buf_get_lines(curr_buf, 0, -1, false)
 		local curr_text = buf_data_to_string(curr_lines)
+
+		-- Get explicit file buffer contents
+		local buffer_file_pattern = "^%$%$(%d+)$"
+		local self_buffer_file_pattern = "^%$%$$"
+		local tmpdir = vim.uv.os_tmpdir()
+		for argno = 1, #args.fargs, 1 do
+			local buf_id = nil
+			if string.match(args.fargs[argno], self_buffer_file_pattern) then
+				buf_id = vim.api.nvim_get_current_buf()
+			end
+			if not buf_id then
+				buf_id = tonumber(string.match(args.fargs[argno], buffer_file_pattern), 10)
+			end
+
+			if not buf_id then
+				goto continue
+			end
+
+			if not vim.api.nvim_buf_is_valid(buf_id) then
+				vim.notify(
+					string.format("'%s %s' unknown buffer %s", args.name, args.fargs[1], args.fargs[argno]),
+					vim.log.levels.ERROR
+				)
+				print(string.format("Unknown buffer: %s", args.fargs[argno]))
+				return
+			end
+
+			local lines = vim.api.nvim_buf_get_lines(buf_id, 0, -1, false)
+			local text = buf_data_to_string(lines)
+
+			-- Create temporary file
+			local fd, path = vim.uv.fs_mkstemp(tmpdir .. "/XXXXXX")
+			if not fd then
+				vim.notify(
+					string.format("'%s %s' internal error: failed creating tmp file", args.name, args.fargs[1]),
+					vim.log.levels.ERROR
+				)
+				print(string.format("Internal error: failed creating tmp file %s; err: %s", tmpdir .. "XXXXXX", path))
+				return
+			end
+
+			local _, err = vim.uv.fs_write(fd, text)
+			if err then
+				vim.notify(
+					string.format("'%s %s' internal error: failed writing to tmp file", args.name, args.fargs[1]),
+					vim.log.levels.ERROR
+				)
+				print(string.format("Internal error: failed writing to tmp file %s; err: %s", path, err))
+				return
+			end
+
+			args.fargs[argno] = path
+
+			::continue::
+		end
 
 		-- Run shell command
 		local sh_args = table.concat(args.fargs, " ")
